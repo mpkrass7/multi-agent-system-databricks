@@ -22,6 +22,7 @@ load_dotenv("/Users/sathish.gangichetty/Documents/openai-agents/apps/.env-local"
 
 # Initialize environment variables
 BASE_URL = os.getenv("DATABRICKS_BASE_URL") or ""
+# API_KEY = st.context.headers.get('X-Forwarded-Access-Token')
 API_KEY = os.getenv("DATABRICKS_TOKEN") or ""
 MODEL_NAME = os.getenv("DATABRICKS_MODEL") or ""
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""

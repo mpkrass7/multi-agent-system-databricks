@@ -25,6 +25,7 @@ MODEL_NAME = os.getenv("DATABRICKS_MODEL") or ""
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 BASE_URL = os.getenv("DATABRICKS_BASE_URL") or ""
 API_KEY = os.getenv("DATABRICKS_TOKEN") or ""
+# API_KEY = st.context.headers.get('X-Forwarded-Access-Token')
 
 # Initialize clients
 client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
