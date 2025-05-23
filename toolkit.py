@@ -192,7 +192,7 @@ def do_research_and_reason(user_query: str):
 
     # chat completion with streaming
     response_stream = client.chat.completions.create(
-        model="sonar-reasoning-pro",
+        model="sonar-reasoning-pro", #o3 comp
         messages=messages,
         stream=True,
     )

@@ -1,12 +1,15 @@
 import streamlit as st
 from dotenv import load_dotenv
 import os
-from agents import Agent, OpenAIChatCompletionsModel, Runner, RunContextWrapper, handoff
+from agents import Agent, OpenAIChatCompletionsModel, Runner, RunContextWrapper, handoff, set_tracing_disabled
 from openai import AsyncOpenAI
 from databricks.sdk import WorkspaceClient
 import asyncio
 from dataclasses import dataclass
 from typing import Optional, Dict, List
+import mlflow
+from mlflow.tracing.destination import Databricks
+import logging
 # from threading import Thread
 import time
 from toolkit import (
@@ -26,6 +29,19 @@ MODEL_NAME = os.getenv("DATABRICKS_MODEL") or ""
 BASE_URL = os.getenv("DATABRICKS_BASE_URL") or ""
 API_KEY = os.getenv("DATABRICKS_TOKEN") or ""
 # API_KEY = st.context.headers.get('X-Forwarded-Access-Token')
+
+MLFLOW_EXPERIMENT_ID = os.getenv("MLFLOW_EXPERIMENT_ID") or ""
+set_tracing_disabled(True)
+try:
+    if MLFLOW_EXPERIMENT_ID:
+        mlflow.set_registry_uri("databricks")
+        mlflow.tracing.set_destination(Databricks(experiment_id=MLFLOW_EXPERIMENT_ID))
+        mlflow.openai.autolog()
+        logging.info("MLflow logging enabled")
+    else:
+        logging.info("MLflow logging disabled - MLFLOW_EXPERIMENT_ID not set")
+except Exception as e:
+    logging.warning(f"Failed to initialize MLflow logging: {str(e)}")
 
 # Initialize clients
 client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
@@ -311,6 +327,7 @@ async def process_query(query, shared_context):
     return result, active_agent
 
 # Function to run async operations in a separate thread
+@mlflow.trace(span_type="AGENT")
 def run_async_query(query):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
