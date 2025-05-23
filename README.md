@@ -16,8 +16,8 @@ AI-powered business intelligence platform with collaborative multi-agent archite
 
 **Enterprise Agent**
 - Store performance analysis (Databricks Genie)
-- Product inventory tracking  
-- Business policy lookup
+- Product inventory tracking (Databricks Genie)
+- Business policy lookup (UC function)
 
 **Market Agent**
 - Geographic demographics (Census API)
@@ -27,8 +27,8 @@ AI-powered business intelligence platform with collaborative multi-agent archite
 
 ## Tech Stack
 
-- **Python 3.8+**, **OpenAI Agents**, **Streamlit**
-- **Databricks** (ML platform), **MLflow** (tracking)
+- **Python 3.10+**, **OpenAI Agents**, **Streamlit**
+- **Databricks** (ML platform), **MLflow** (tracing)
 - **Census API** (demographics), **Perplexity AI** (research)
 
 ## Installation
