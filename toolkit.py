@@ -1,20 +1,18 @@
 # %%
-from agents import function_tool, set_tracing_disabled
 import os
-import requests
 import time
-from unitycatalog.ai.core.databricks import (
-    DatabricksFunctionClient,
-    FunctionExecutionResult,
-)
+
+import requests
+import streamlit as st
+from agents import function_tool, set_tracing_disabled
+from census import Census
 from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
-from openai import OpenAI
-from census import Census
-from us import states
+from openai import AsyncOpenAI, OpenAI
 from rich import print
-import streamlit as st
+from unitycatalog.ai.core.databricks import (DatabricksFunctionClient,
+                                             FunctionExecutionResult)
+from us import states
 
 # %%
 # Load environment variables
@@ -192,7 +190,7 @@ def do_research_and_reason(user_query: str):
 
     # chat completion with streaming
     response_stream = client.chat.completions.create(
-        model="sonar-reasoning-pro", #o3 comp
+        model="sonar-reasoning-pro",  # o3 comp
         messages=messages,
         stream=True,
     )

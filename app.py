@@ -1,24 +1,22 @@
-import streamlit as st
-from dotenv import load_dotenv
-import os
-from agents import Agent, OpenAIChatCompletionsModel, Runner, RunContextWrapper, handoff, set_tracing_disabled
-from openai import AsyncOpenAI
-from databricks.sdk import WorkspaceClient
 import asyncio
-from dataclasses import dataclass
-from typing import Optional, Dict, List
-import mlflow
-from mlflow.tracing.destination import Databricks
 import logging
+import os
 # from threading import Thread
 import time
-from toolkit import (
-    get_store_performance_info,
-    get_product_inventory_info,
-    get_business_conduct_policy_info,
-    get_state_census_data,
-    do_research_and_reason,
-)
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+import mlflow
+import streamlit as st
+from agents import (Agent, OpenAIChatCompletionsModel, RunContextWrapper,
+                    Runner, handoff, set_tracing_disabled)
+from dotenv import load_dotenv
+from mlflow.tracing.destination import Databricks
+from openai import AsyncOpenAI
+
+from toolkit import (do_research_and_reason, get_business_conduct_policy_info,
+                     get_product_inventory_info, get_state_census_data,
+                     get_store_performance_info)
 
 # Load environment variables
 load_dotenv("/Users/sathish.gangichetty/Documents/openai-agents/apps/.env-local")
@@ -50,6 +48,7 @@ client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
 #     auth_type="pat",
 # )
 
+
 # Define a shared context class to pass data between agents
 @dataclass
 class SharedAgentContext:
@@ -60,25 +59,26 @@ class SharedAgentContext:
     current_agent: Optional[str] = None
     current_tool: Optional[str] = None
     conversation_history: List = None
-    
+
     def __post_init__(self):
         if self.conversation_history is None:
             self.conversation_history = []
-            
+
     def add_message(self, role: str, content: str):
         """Add a message to the conversation history"""
         self.conversation_history.append({"role": role, "content": content})
-        
+
     def get_formatted_history(self):
         """Format conversation history for consumption by agents"""
         if not self.conversation_history:
             return "No conversation history available."
-        
+
         formatted_history = []
         for msg in self.conversation_history:
             formatted_history.append(f"{msg['role']}: {msg['content']}")
-        
+
         return "\n\n".join(formatted_history)
+
 
 # Custom hooks for Streamlit visualization
 class StreamlitAgentHooks:
@@ -86,93 +86,124 @@ class StreamlitAgentHooks:
         self.start_time = None
         self.agent_status = st.empty()
         self.tool_status = st.empty()
-        
-    async def on_agent_start(self, context: RunContextWrapper[SharedAgentContext], agent):
+
+    async def on_agent_start(
+        self, context: RunContextWrapper[SharedAgentContext], agent
+    ):
         self.start_time = time.time()
         agent_name = agent.name
         context.context.current_agent = agent_name
-        
+
         with self.agent_status.container():
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div class="agent-status agent-active">
                 <div class="agent-icon">🤖</div>
                 <div class="agent-name">{agent_name}</div>
                 <div class="status-indicator">Active</div>
             </div>
-            """, unsafe_allow_html=True)
-    
-    async def on_agent_end(self, context: RunContextWrapper[SharedAgentContext], agent, output):
+            """,
+                unsafe_allow_html=True,
+            )
+
+    async def on_agent_end(
+        self, context: RunContextWrapper[SharedAgentContext], agent, output
+    ):
         agent_name = agent.name
         duration = time.time() - self.start_time
-        
+
         # Add to conversation history
         context.context.add_message(f"{agent_name}", output)
-        
+
         with self.agent_status.container():
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div class="agent-status agent-complete">
                 <div class="agent-icon">✅</div>
                 <div class="agent-name">{agent_name}</div>
                 <div class="status-indicator">Completed in {duration:.2f}s</div>
             </div>
-            """, unsafe_allow_html=True)
-        
-    async def on_tool_start(self, context: RunContextWrapper[SharedAgentContext], agent, tool):
+            """,
+                unsafe_allow_html=True,
+            )
+
+    async def on_tool_start(
+        self, context: RunContextWrapper[SharedAgentContext], agent, tool
+    ):
         tool_name = tool.name
         context.context.current_tool = tool_name
-        
+
         with self.tool_status.container():
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div class="tool-status tool-active">
                 <div class="tool-icon">🔧</div>
                 <div class="tool-name">{tool_name}</div>
                 <div class="status-indicator">Running...</div>
             </div>
-            """, unsafe_allow_html=True)
-        
-    async def on_tool_end(self, context: RunContextWrapper[SharedAgentContext], agent, tool, result):
+            """,
+                unsafe_allow_html=True,
+            )
+
+    async def on_tool_end(
+        self, context: RunContextWrapper[SharedAgentContext], agent, tool, result
+    ):
         tool_name = tool.name
-        
+
         # Record tool usage in conversation history
         context.context.add_message(f"Tool ({tool_name})", str(result))
-        
+
         with self.tool_status.container():
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div class="tool-status tool-complete">
                 <div class="tool-icon">✓</div>
                 <div class="tool-name">{tool_name}</div>
                 <div class="status-indicator">Completed</div>
             </div>
-            """, unsafe_allow_html=True)
-    
-    async def on_handoff(self, context: RunContextWrapper[SharedAgentContext], from_agent, to_agent):
+            """,
+                unsafe_allow_html=True,
+            )
+
+    async def on_handoff(
+        self, context: RunContextWrapper[SharedAgentContext], from_agent, to_agent
+    ):
         from_name = from_agent.name
         to_name = to_agent.name
-        
+
         # Record handoff in conversation history
         context.context.add_message("System", f"Handoff from {from_name} to {to_name}")
-        
+
         with self.agent_status.container():
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div class="handoff-status">
                 <div class="from-agent">{from_name}</div>
                 <div class="handoff-icon">↪️</div>
                 <div class="to-agent">{to_name}</div>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
+
 
 # Helper function to load prompts from files
 def load_prompt(file_path):
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         return file.read()
 
+
 # Load agent prompts
-enterprise_intelligence_prompt = load_prompt('prompts/enterprise_intelligence_agent.txt')
-market_intelligence_prompt = load_prompt('prompts/market_intelligence_agent.txt')
-triage_agent_prompt = load_prompt('prompts/triage_agent.txt')
+enterprise_intelligence_prompt = load_prompt(
+    "prompts/enterprise_intelligence_agent.txt"
+)
+market_intelligence_prompt = load_prompt("prompts/market_intelligence_agent.txt")
+triage_agent_prompt = load_prompt("prompts/triage_agent.txt")
 
 # Enhance the agent prompts to handle the tools-for-agents pattern
-enhanced_enterprise_prompt = enterprise_intelligence_prompt + """
+enhanced_enterprise_prompt = (
+    enterprise_intelligence_prompt
+    + """
 
 ## Additional Capabilities
 You now have the Market Intelligence Agent available as a tool. When a query requires demographic or market research data:
@@ -180,8 +211,11 @@ You now have the Market Intelligence Agent available as a tool. When a query req
 2. Then use the get_market_intelligence tool to obtain demographic information for that location
 3. Combine both sources of information to provide a complete response
 """
+)
 
-enhanced_market_prompt = market_intelligence_prompt + """
+enhanced_market_prompt = (
+    market_intelligence_prompt
+    + """
 
 ## Additional Capabilities
 You now have the Enterprise Intelligence Agent available as a tool. When a query requires store-specific information:
@@ -193,8 +227,9 @@ For example, if asked "Based on where store 110 is located, what are the demogra
 1. First use get_enterprise_data to find out where store 110 is located
 2. Then analyze the demographics of that location using your tools
 """
+)
 
-# Initial Enterprise Intelligence Agent 
+# Initial Enterprise Intelligence Agent
 enterprise_intelligence_agent = Agent(
     name="Enterprise Intelligence Agent",
     handoff_description="Specialist in enterprise analytics pertaining to the store performance, sales, store location, returns, BOPIS(buy online pick up in store), policy, inventory etc.",
@@ -214,16 +249,19 @@ market_intelligence_agent = Agent(
     instructions=market_intelligence_prompt,
     model=OpenAIChatCompletionsModel(model=MODEL_NAME, openai_client=client),
     tools=[
-        get_state_census_data, 
+        get_state_census_data,
         do_research_and_reason,
     ],
 )
 
+
 def on_enterprise_intelligence_handoff(ctx: RunContextWrapper[SharedAgentContext]):
     st.sidebar.success("🔄 Handing off to Enterprise Intelligence Agent")
 
+
 def on_market_intelligence_handoff(ctx: RunContextWrapper[SharedAgentContext]):
     st.sidebar.success("🔄 Handing off to Market Intelligence Agent")
+
 
 # Enhanced agents with tools-for-agents pattern
 enhanced_enterprise_agent = Agent(
@@ -248,7 +286,7 @@ enhanced_market_agent = Agent(
     instructions=enhanced_market_prompt,
     model=OpenAIChatCompletionsModel(model=MODEL_NAME, openai_client=client),
     tools=[
-        get_state_census_data, 
+        get_state_census_data,
         do_research_and_reason,
         enterprise_intelligence_agent.as_tool(
             tool_name="get_enterprise_data",
@@ -258,7 +296,9 @@ enhanced_market_agent = Agent(
 )
 
 # Update triage agent with improved instructions
-enhanced_triage_prompt = triage_agent_prompt + """
+enhanced_triage_prompt = (
+    triage_agent_prompt
+    + """
 
 ## Updated Decision Logic for Compound Questions
 For compound questions that require information from multiple agents:
@@ -279,6 +319,7 @@ When the user asks for a summary of the conversation (e.g., "summarize our conve
 4. Highlight any important information discovered during the conversation
 5. Do NOT hand off to other agents for summarization requests
 """
+)
 
 triage_agent = Agent(
     name="Triage Agent",
@@ -292,46 +333,59 @@ triage_agent = Agent(
     ],
 )
 
+
 # Async function to process a query
 async def process_query(query, shared_context):
     """Process a single query through the multi-agent system"""
     # Record user query in conversation history
     shared_context.add_message("User", query)
-    
+
     # Create hooks for visualization
     hooks = StreamlitAgentHooks()
-    
+
     # Check if this is a summarization request
-    if any(phrase in query.lower() for phrase in ["summarize", "summary", "what have we discussed", "our conversation"]):
+    if any(
+        phrase in query.lower()
+        for phrase in [
+            "summarize",
+            "summary",
+            "what have we discussed",
+            "our conversation",
+        ]
+    ):
         # Add the conversation history to the query for context
         conversation_history = shared_context.get_formatted_history()
         enhanced_query = f"{query}\n\nHere is the conversation history to summarize:\n{conversation_history}"
         st.info("Detected summarization request. Including conversation history.")
     else:
         enhanced_query = query
-    
+
     # Run the agent
     result = await Runner.run(
-        triage_agent, 
+        triage_agent,
         enhanced_query,
         context=shared_context,
         hooks=hooks,
     )
-    
+
     # Get the current active agent's name
     active_agent = shared_context.current_agent or "Assistant"
-    
+
     # Record the final output in the conversation history with the correct agent name
     shared_context.add_message(active_agent, result.final_output)
-    
+
     return result, active_agent
+
 
 # Function to run async operations in a separate thread
 @mlflow.trace(span_type="AGENT")
 def run_async_query(query):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    return loop.run_until_complete(process_query(query, st.session_state.shared_context))
+    return loop.run_until_complete(
+        process_query(query, st.session_state.shared_context)
+    )
+
 
 # Set up Streamlit UI
 st.set_page_config(
@@ -342,7 +396,8 @@ st.set_page_config(
 )
 
 # Dark mode theme
-st.markdown("""
+st.markdown(
+    """
 <style>
 :root {
     --background-color: #121212;
@@ -577,7 +632,9 @@ footer {display: none !important;}
 #MainMenu {visibility: hidden;}
 header {visibility: hidden;}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Initialize session state
 if "shared_context" not in st.session_state:
@@ -592,36 +649,45 @@ if "processing" not in st.session_state:
 # Sidebar
 with st.sidebar:
     st.title("🤖 Agent Intelligence System")
-    
+
     st.markdown("### System Information")
     st.info("Multi-agent system with tools-for-agents pattern")
-    
+
     st.markdown("### Available Agents")
-    
+
     # Triage Agent Card
-    st.markdown("""
+    st.markdown(
+        """
     <div class="agent-card" style="border-left: 4px solid var(--triage-color);">
         <h4>🔀 Triage Agent</h4>
         <p>Routes queries to appropriate specialist agents</p>
     </div>
-    """, unsafe_allow_html=True)
-    
+    """,
+        unsafe_allow_html=True,
+    )
+
     # Enterprise Intelligence Agent Card
-    st.markdown("""
+    st.markdown(
+        """
     <div class="agent-card" style="border-left: 4px solid var(--enterprise-color);">
         <h4>📊 Enterprise Intelligence Agent</h4>
         <p>Store performance, inventory, business policies</p>
     </div>
-    """, unsafe_allow_html=True)
-    
+    """,
+        unsafe_allow_html=True,
+    )
+
     # Market Intelligence Agent Card
-    st.markdown("""
+    st.markdown(
+        """
     <div class="agent-card" style="border-left: 4px solid var(--market-color);">
         <h4>📈 Market Intelligence Agent</h4>
         <p>Demographic data, market research</p>
     </div>
-    """, unsafe_allow_html=True)
-    
+    """,
+        unsafe_allow_html=True,
+    )
+
     # Debug mode toggle
     st.markdown("### Debug Options")
     debug_mode = st.checkbox("Enable Debug Mode", value=st.session_state.debug_mode)
@@ -629,8 +695,10 @@ with st.sidebar:
         st.session_state.debug_mode = debug_mode
 
     # Add hint for debug mode
-    st.caption("💡 Tip: Only enable/disable debug mode before or after asking a question, not during processing")
-    
+    st.caption(
+        "💡 Tip: Only enable/disable debug mode before or after asking a question, not during processing"
+    )
+
     # Clear conversation
     if st.button("Clear Conversation"):
         st.session_state.messages = []
@@ -645,30 +713,42 @@ st.markdown("### Example Queries")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown("""
+    st.markdown(
+        """
     <div class="example-card" onclick="document.querySelector('.stChatInput input').value = 'Based on where store 110 is located, what are the demographics of the area? Specifically, I'm interested in income levels, total population, home ownership, and education levels.'; document.querySelector('.stChatInput button').click();">
         <p><strong>Mixed Compound Query:</strong> Based on where store 110 is located, what are the demographics of the area? Specifically, I'm interested in income levels, total population, home ownership, and education levels.</p>
     </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
+    """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
     <div class="example-card" onclick="document.querySelector('.stChatInput input').value = 'What is the overtime work policy for our vendors?'; document.querySelector('.stChatInput button').click();">
         <p><strong>Policy Query:</strong> What is the overtime work policy for our vendors?</p>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 with col2:
-    st.markdown("""
+    st.markdown(
+        """
     <div class="example-card" onclick="document.querySelector('.stChatInput input').value = ' I need to do some market research to run a special on golf apparel. Can you help me compare florida and virginia for this purely based on demographics and time of year?'; document.querySelector('.stChatInput button').click();">
         <p><strong>Market Research:</strong> I need to do some market research to run a special on golf apparel. Can you help me compare florida and virginia for this purely based on demographics and time of year?</p>
     </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
+    """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
     <div class="example-card" onclick="document.querySelector('.stChatInput input').value = 'Can you summarize our conversation so far?'; document.querySelector('.stChatInput button').click();">
         <p><strong>Utility:</strong> Can you summarize our conversation so far?</p>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 # Status area for agent activity
 status_area = st.container()
@@ -682,78 +762,107 @@ with chat_container:
     for message in st.session_state.messages:
         role = message["role"]
         content = message["content"]
-        
+
         if role == "User":
             with st.chat_message("user"):
-                st.markdown(f"""<div class="user-message">{content}</div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f"""<div class="user-message">{content}</div>""",
+                    unsafe_allow_html=True,
+                )
         elif role.startswith("Tool"):
             with st.chat_message("assistant", avatar="🔧"):
-                st.markdown(f"""<div class="tool-message"><strong>{role}:</strong><br>{content}</div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f"""<div class="tool-message"><strong>{role}:</strong><br>{content}</div>""",
+                    unsafe_allow_html=True,
+                )
         elif role == "System":
             with st.chat_message("assistant", avatar="ℹ️"):
-                st.markdown(f"""<div class="system-message">{content}</div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f"""<div class="system-message">{content}</div>""",
+                    unsafe_allow_html=True,
+                )
         else:
             # Set appropriate avatar based on agent name
             avatar = "🤖"
             if role == "Enterprise Intelligence Agent":
-                avatar = "📊" 
+                avatar = "📊"
             elif role == "Market Intelligence Agent":
                 avatar = "📈"
             elif role == "Triage Agent":
                 avatar = "🔀"
-                
+
             with st.chat_message("assistant", avatar=avatar):
-                st.markdown(f"""<div class="assistant-message"><strong>{role}:</strong><br>{content}</div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f"""<div class="assistant-message"><strong>{role}:</strong><br>{content}</div>""",
+                    unsafe_allow_html=True,
+                )
 
 # Debug view
 if st.session_state.debug_mode:
     with st.expander("Debug Information", expanded=True):
         st.markdown("### Current Context Values")
-        st.json({
-            "store_location": st.session_state.shared_context.store_location,
-            "store_id": st.session_state.shared_context.store_id,
-            "state_code": st.session_state.shared_context.state_code,
-            "current_agent": st.session_state.shared_context.current_agent,
-            "current_tool": st.session_state.shared_context.current_tool,
-            "history_length": len(st.session_state.shared_context.conversation_history)
-        })
-        
+        st.json(
+            {
+                "store_location": st.session_state.shared_context.store_location,
+                "store_id": st.session_state.shared_context.store_id,
+                "state_code": st.session_state.shared_context.state_code,
+                "current_agent": st.session_state.shared_context.current_agent,
+                "current_tool": st.session_state.shared_context.current_tool,
+                "history_length": len(
+                    st.session_state.shared_context.conversation_history
+                ),
+            }
+        )
+
         st.markdown("### Raw Conversation History")
         for i, entry in enumerate(st.session_state.shared_context.conversation_history):
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div class="debug-entry">
-                <strong>{i}:</strong> <span style="color: #FF9800;">{entry['role']}</span>: 
-                <span style="color: #E0E0E0;">{entry['content'][:100]}{"..." if len(entry['content']) > 100 else ""}</span>
+                <strong>{i}:</strong> <span style="color: #FF9800;">{entry["role"]}</span>: 
+                <span style="color: #E0E0E0;">{entry["content"][:100]}{"..." if len(entry["content"]) > 100 else ""}</span>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
 
 # Chat input
-if query := st.chat_input("Ask me anything about store performance, market research, or policies..."):
+if query := st.chat_input(
+    "Ask me anything about store performance, market research, or policies..."
+):
     # Prevent multiple submissions while processing
     if st.session_state.processing:
         st.warning("Already processing a query, please wait...")
         st.stop()
-    
+
     st.session_state.processing = True
-    
+
     # Add user message to chat display
     st.session_state.messages.append({"role": "User", "content": query})
     with st.chat_message("user"):
-        st.markdown(f"""<div class="user-message">{query}</div>""", unsafe_allow_html=True)
-    
+        st.markdown(
+            f"""<div class="user-message">{query}</div>""", unsafe_allow_html=True
+        )
+
     # Process the query
     with status_area:
         with st.status("Processing your query...", expanded=True) as status:
             try:
                 # Use a separate thread for async operation
                 result, active_agent = run_async_query(query)
-                
+
                 # Add assistant response to chat display with the correct agent name
                 final_output = result.final_output
-                st.session_state.messages.append({"role": active_agent, "content": final_output})
-                
-                status.update(label="Query processed successfully", state="complete", expanded=False)
-                
+                st.session_state.messages.append(
+                    {"role": active_agent, "content": final_output}
+                )
+
+                status.update(
+                    label="Query processed successfully",
+                    state="complete",
+                    expanded=False,
+                )
+
                 # Display the response with the correct agent avatar
                 avatar = "🤖"
                 if active_agent == "Enterprise Intelligence Agent":
@@ -762,18 +871,22 @@ if query := st.chat_input("Ask me anything about store performance, market resea
                     avatar = "📈"
                 elif active_agent == "Triage Agent":
                     avatar = "🔀"
-                
+
                 with st.chat_message("assistant", avatar=avatar):
-                    st.markdown(f"""<div class="assistant-message"><strong>{active_agent}:</strong><br>{final_output}</div>""", unsafe_allow_html=True)
-                    
+                    st.markdown(
+                        f"""<div class="assistant-message"><strong>{active_agent}:</strong><br>{final_output}</div>""",
+                        unsafe_allow_html=True,
+                    )
+
                 # Force a rerun to update the UI with the new messages
                 st.session_state.processing = False
                 st.rerun()
-                    
+
             except Exception as e:
                 st.error(f"Error processing query: {str(e)}")
                 import traceback
+
                 if st.session_state.debug_mode:
                     st.code(traceback.format_exc())
             finally:
-                st.session_state.processing = False 
+                st.session_state.processing = False
