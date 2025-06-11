@@ -349,6 +349,7 @@ async def process_query(query, shared_context=None):
             enhanced_query,
             context=shared_context,
             hooks=hooks,
+            max_turns=8,
         )
 
     # Print the final output with nice formatting
@@ -387,9 +388,13 @@ async def interactive_session():
     console.print(
         Panel(
             "[dim]Example queries:\n"
+            + "- What is the sales performance of store 110?\n"
+            + "- What is the most recent inventory status of store 110?\n"
+            + "- Generate sales forecast for store 110 for the next 6 months\n"
+            + "- What is the overtime policy for vendors?\n"
             + "- Based on where store 110 is located, what are the demographics of the area?\n"
             + "- Is Florida a good place to open a new store compared to Virginia?\n"
-            + "- What is the policy for returns at our stores?\n"
+            + "- What is the minimum age for factory workers in our code of conduct?\n"
             + "- Can you summarize our conversation so far?[/dim]",
             title="Examples",
             expand=False,
