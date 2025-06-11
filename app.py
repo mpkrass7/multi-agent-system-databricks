@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+
 # from threading import Thread
 import time
 from dataclasses import dataclass
@@ -8,15 +9,25 @@ from typing import Dict, List, Optional
 
 import mlflow
 import streamlit as st
-from agents import (Agent, OpenAIChatCompletionsModel, RunContextWrapper,
-                    Runner, handoff, set_tracing_disabled)
+from agents import (
+    Agent,
+    OpenAIChatCompletionsModel,
+    RunContextWrapper,
+    Runner,
+    handoff,
+    set_tracing_disabled,
+)
 from dotenv import load_dotenv
 from mlflow.tracing.destination import Databricks
 from openai import AsyncOpenAI
 
-from toolkit import (do_research_and_reason, get_business_conduct_policy_info,
-                     get_product_inventory_info, get_state_census_data,
-                     get_store_performance_info)
+from toolkit import (
+    do_research_and_reason,
+    get_business_conduct_policy_info,
+    get_product_inventory_info,
+    get_state_census_data,
+    get_store_performance_info,
+)
 
 # Load environment variables
 load_dotenv("/Users/sathish.gangichetty/Documents/openai-agents/apps/.env-local")

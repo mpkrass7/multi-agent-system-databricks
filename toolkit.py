@@ -2,86 +2,78 @@
 import os
 import time
 
-import requests
-import streamlit as st
 from agents import function_tool, set_tracing_disabled
 from census import Census
 from databricks.sdk import WorkspaceClient
-from dotenv import load_dotenv
 from openai import AsyncOpenAI, OpenAI
 from rich import print
-from unitycatalog.ai.core.databricks import (DatabricksFunctionClient,
-                                             FunctionExecutionResult)
+import yaml
+
 from us import states
 
-# %%
-# Load environment variables
-load_dotenv("/Users/sathish.gangichetty/Documents/openai-agents/apps/.env-local")
 
 # Initialize environment variables
 BASE_URL = os.getenv("DATABRICKS_BASE_URL") or ""
 # API_KEY = st.context.headers.get('X-Forwarded-Access-Token')
 API_KEY = os.getenv("DATABRICKS_TOKEN") or ""
 MODEL_NAME = os.getenv("DATABRICKS_MODEL") or ""
+HOST = os.getenv("DATABRICKS_HOST") or ""
+
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 set_tracing_disabled(True)
 
+
+with open("app_config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+    CATALOG = config.get("CATALOG", "retail")
+    SCHEMA = config.get("SCHEMA", "retail")
+    GENIE_SPACE_STORE_PERFORMANCE_ID = config.get(
+        "GENIE_SPACE_STORE_PERFORMANCE_ID", "store_performance"
+    )
+    GENIE_SPACE_PRODUCT_INV_ID = config.get(
+        "GENIE_SPACE_PRODUCT_INV_ID", "product_inventory"
+    )
+
 # Initialize clients
-client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
 w = WorkspaceClient(
-    host=os.getenv("DATABRICKS_HOST"),
+    host=HOST,
     token=os.getenv("DATABRICKS_TOKEN"),
     auth_type="pat",
 )
-dbclient = DatabricksFunctionClient(client=w)
+sync_client = w.serving_endpoints.get_open_ai_client()
+client = AsyncOpenAI(
+    base_url=sync_client.base_url, api_key=os.getenv("DATABRICKS_TOKEN")
+)
 
 
 @function_tool
 def get_store_performance_info(user_query: str):
     """
-    For us, we use this to get information about the store location, store performance, returns, BOPIS(buy online pick up in store) etc.
+    Provide information about the store location, store performance, returns, BOPIS(buy online pick up in store) etc.
     """
-    st.write(
-        "<span style='color:green;'>[🛠️TOOL-CALL]: the <a href='https://adb-984752964297111.11.azuredatabricks.net/genie/rooms/01f023ae84651418a1203b194dff21a9?o=984752964297111' target='_blank'>get_store_performance_info</a> tool was called</span>",
-        unsafe_allow_html=True,
-    )
-    print("INFO: `get_store_performance_info` tool called")
-    databricks_instance = os.getenv("DATABRICKS_HOST")
-    space_id = os.getenv("GENIE_SPACE_ID")
-    access_token = os.getenv("DATABRICKS_TOKEN")
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-    poll_interval = 2.0
+
+    space_id = GENIE_SPACE_STORE_PERFORMANCE_ID
+    print(f"INFO: `get_store_performance_info` tool called with space_id: {space_id}")
     timeout = 60.0
-
-    # Step 1: Start a new conversation
-    start_url = (
-        f"{databricks_instance}/api/2.0/genie/spaces/{space_id}/start-conversation"
-    )
-    payload = {"content": user_query}
-    resp = requests.post(start_url, headers=headers, json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-    print(data)
-    conversation_id = data["conversation_id"]
-    message_id = data["message_id"]
-
-    # Step 2: Poll for completion
-    poll_url = f"{databricks_instance}/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}"
+    poll_interval = 2.0
+    # Step 1: Start a new conversation using the SDK
+    message = w.genie.start_conversation_and_wait(space_id, user_query)
+    conversation_id = message.conversation_id
+    message_id = message.id
+    # Step 2: Poll for completion using the SDK
     start_time = time.time()
     while True:
-        poll_resp = requests.get(poll_url, headers=headers)
-        poll_resp.raise_for_status()
-        poll_data = poll_resp.json()
-        status = poll_data.get("status")
+        msg = w.genie.get_message(space_id, conversation_id, message_id)
+        status = msg.status.value if msg.status else None
         if status == "COMPLETED":
-            attachment_id = poll_data["attachments"][0]["attachment_id"]
-            url = f"{databricks_instance}/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/query-result"
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json()["statement_response"]
+            if msg.attachments and len(msg.attachments) > 0:
+                attachment_id = msg.attachments[0].attachment_id
+                result = w.genie.get_message_attachment_query_result(
+                    space_id, conversation_id, message_id, attachment_id
+                )
+                return result.statement_response.as_dict()
+            else:
+                return {"error": "No attachments found in message."}
         if time.time() - start_time > timeout:
             raise TimeoutError("Genie API query timed out.")
         time.sleep(poll_interval)
@@ -90,69 +82,60 @@ def get_store_performance_info(user_query: str):
 @function_tool
 def get_product_inventory_info(user_query: str):
     """
-    For us, we use this to get information about products and the current inventory snapshot across stores
+    Provide information about products and the current inventory snapshot across stores.
     """
-    st.write(
-        "<span style='color:green;'>[🛠️TOOL-CALL]: the <a href='https://adb-984752964297111.11.azuredatabricks.net/genie/rooms/01f02c2c29211c388b9b5b9b6f5a80c9?o=984752964297111' target='_blank'>get_product_inventory_info</a> tool was called</span>",
-        unsafe_allow_html=True,
-    )
-    print("INFO: `get_product_inventory_info` tool called")
-    databricks_instance = os.getenv("DATABRICKS_HOST")
-    space_id = os.getenv("GENIE_SPACE_PRODUCT_INV_ID")
-    access_token = os.getenv("DATABRICKS_TOKEN")
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-    poll_interval = 2.0
+
+    space_id = GENIE_SPACE_PRODUCT_INV_ID
+    print(f"INFO: `get_product_inventory_info` tool called with space_id: {space_id}")
     timeout = 60.0
-
-    # Step 1: Start a new conversation
-    start_url = (
-        f"{databricks_instance}/api/2.0/genie/spaces/{space_id}/start-conversation"
-    )
-    payload = {"content": user_query}
-    resp = requests.post(start_url, headers=headers, json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-    print(data)
-    conversation_id = data["conversation_id"]
-    message_id = data["message_id"]
-
-    # Step 2: Poll for completion
-    poll_url = f"{databricks_instance}/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}"
+    poll_interval = 2.0
+    # Step 1: Start a new conversation using the SDK
+    message = w.genie.start_conversation_and_wait(space_id, user_query)
+    conversation_id = message.conversation_id
+    message_id = message.id
+    # Step 2: Poll for completion using the SDK
     start_time = time.time()
     while True:
-        poll_resp = requests.get(poll_url, headers=headers)
-        poll_resp.raise_for_status()
-        poll_data = poll_resp.json()
-        status = poll_data.get("status")
+        msg = w.genie.get_message(space_id, conversation_id, message_id)
+        status = msg.status.value if msg.status else None
         if status == "COMPLETED":
-            attachment_id = poll_data["attachments"][0]["attachment_id"]
-            url = f"{databricks_instance}/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/query-result"
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json()["statement_response"]
+            if msg.attachments and len(msg.attachments) > 0:
+                attachment_id = msg.attachments[0].attachment_id
+                result = w.genie.get_message_attachment_query_result(
+                    space_id, conversation_id, message_id, attachment_id
+                )
+                return result.statement_response.as_dict()
+            else:
+                return {"error": "No attachments found in message."}
         if time.time() - start_time > timeout:
             raise TimeoutError("Genie API query timed out.")
         time.sleep(poll_interval)
 
 
 @function_tool
-def get_business_conduct_policy_info(search_query: str) -> FunctionExecutionResult:
-    st.write(
-        "<span style='color:green;'>[🛠️TOOL-CALL]: the <a href='https://adb-984752964297111.11.azuredatabricks.net/explore/data/main/sgfs/retail_conduct_policy?o=984752964297111&activeTab=overview' target='_blank'>get_business_conduct_policy_info</a> tool was called</span>",
-        unsafe_allow_html=True,
-    )
+def get_business_conduct_policy_info(search_query: str) -> str:
+    """
+    Provide information about business conduct policies and code of conduct pertaining to vendors and suppliers.
+
+    Args:
+        user_query: The user's question or request
+    Returns:
+        Relevant documentation or information related to business conduct policies.
+    """
     print("INFO: `get_business_conduct_policy_info` tool called")
-    return dbclient.execute_function(
-        function_name="main.sgfs.retail_club_conduct",
-        parameters={"search_query": search_query},
+
+    index_name = f"{CATALOG}.{SCHEMA}.retail_code_of_conduct_index"
+
+    return w.vector_search_indexes.query_index(
+        index_name=index_name,
+        query_text=search_query,
+        columns=["sec_id", "text_chunks"],
+        num_results=2,
     )
 
 
 @function_tool
-def do_research_and_reason(user_query: str):
+def do_research_and_reason(user_query: str) -> str:
     """
     Get a response from sythesized intelligence from the web including the "thinking" process highligted in the <think></think> tags
 
@@ -181,13 +164,6 @@ def do_research_and_reason(user_query: str):
         api_key=os.getenv("PERPLEXITY_API_KEY"), base_url="https://api.perplexity.ai"
     )
 
-    # chat completion without streaming
-    # response = client.chat.completions.create(
-    #     model="sonar-pro",
-    #     messages=messages,
-    # )
-    # return response.choices[0].message.content
-
     # chat completion with streaming
     response_stream = client.chat.completions.create(
         model="sonar-reasoning-pro",  # o3 comp
@@ -202,17 +178,6 @@ def do_research_and_reason(user_query: str):
             full_response += content
 
     return full_response
-
-
-# from langchain_community.tools import BraveSearch
-
-# tool = BraveSearch.from_api_key(
-#     api_key=os.getenv("BRAVE_API_KEY"), search_kwargs={"count": 5}
-# )
-# print(tool.invoke("prices of blue tack"))
-
-
-# %%
 
 
 # https://downloads.esri.com/esri_content_doc/dbl/us/Var_List_ACS_Winter_2021.pdf

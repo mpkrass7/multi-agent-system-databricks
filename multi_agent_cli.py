@@ -6,8 +6,14 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-from agents import (Agent, OpenAIChatCompletionsModel, RunContextWrapper,
-                    Runner, handoff, set_tracing_disabled)
+from agents import (
+    Agent,
+    OpenAIChatCompletionsModel,
+    RunContextWrapper,
+    Runner,
+    handoff,
+    set_tracing_disabled,
+)
 from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -15,25 +21,29 @@ from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 
-from toolkit import (do_research_and_reason, get_business_conduct_policy_info,
-                     get_product_inventory_info, get_state_census_data,
-                     get_store_performance_info)
+from toolkit import (
+    do_research_and_reason,
+    get_business_conduct_policy_info,
+    get_product_inventory_info,
+    get_state_census_data,
+    get_store_performance_info,
+)
 
 # Initialize Rich console
 console = Console()
 
-load_dotenv("/Users/sathish.gangichetty/Documents/openai-agents/apps/.env-local")
+load_dotenv()
 
 MODEL_NAME = os.getenv("DATABRICKS_MODEL") or ""
 # OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 BASE_URL = os.getenv("DATABRICKS_BASE_URL") or ""
 API_KEY = os.getenv("DATABRICKS_TOKEN") or ""
 set_tracing_disabled(True)
-# Initialize clients
-client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
-w = WorkspaceClient(
-    host=os.getenv("DATABRICKS_HOST"), token=os.getenv("DATABRICKS_TOKEN")
-)
+
+
+w = WorkspaceClient(host=os.environ["DATABRICKS_HOST"], token=API_KEY)
+sync_client = w.serving_endpoints.get_open_ai_client()
+client = AsyncOpenAI(base_url=sync_client.base_url, api_key=API_KEY)
 
 
 # Define a shared context class to pass data between agents
@@ -416,7 +426,7 @@ async def interactive_session():
                 continue
 
             # Process the query with the shared context
-            result, shared_context = await process_query(query, shared_context)
+            _, shared_context = await process_query(query, shared_context)
 
         except KeyboardInterrupt:
             console.print("\n[bold red]Session interrupted. Exiting...[/]")
@@ -467,5 +477,3 @@ if __name__ == "__main__":
     else:
         # Run in interactive mode
         asyncio.run(interactive_session())
-
-# %%
